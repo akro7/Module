@@ -1,13 +1,9 @@
 # ============================================================
-# build_redmi14c_module.yml  —  AKRO GameEquipment Redmi 14C
+# Module.yml  —  AKRO GameEquipment Redmi 14C
 # ============================================================
 name: Build AKRO GameEquipment - Redmi 14C
 
 on:
-  push:
-    branches:
-      - main
-      - master
   workflow_dispatch:
     inputs:
       version:
@@ -82,48 +78,29 @@ jobs:
           ROM   = "rom_work/rom_full.zip"
           BASE  = "extracted"
 
-          # Map: output subfolder  ->  patterns to match inside ZIP
           TARGETS = {
-              "vendor_bin":  [
-                  "*vendor/bin/*",
-              ],
-              "vendor_etc":  [
-                  "*vendor/etc/*",
-              ],
-              "vendor_lib":  [
-                  "*vendor/lib/egl/*",
-                  "*vendor/lib/hw/*",
-                  "*vendor/lib/*.so",
-              ],
-              "vendor_lib64": [
-                  "*vendor/lib64/egl/*",
-                  "*vendor/lib64/hw/*",
-                  "*vendor/lib64/*.so",
-              ],
+              "vendor_bin":   ["*vendor/bin/*"],
+              "vendor_etc":   ["*vendor/etc/*"],
+              "vendor_lib":   ["*vendor/lib/egl/*","*vendor/lib/hw/*","*vendor/lib/*.so"],
+              "vendor_lib64": ["*vendor/lib64/egl/*","*vendor/lib64/hw/*","*vendor/lib64/*.so"],
           }
 
           def matches(name, patterns):
               return any(fnmatch.fnmatch(name, p) for p in patterns)
 
-          # Detect path prefix inside ZIP (some ROMs nest under system/ or vendor/)
           def detect_prefix(z):
-              names = z.namelist()
-              for n in names:
+              for n in z.namelist():
                   if "vendor/bin/" in n:
-                      idx = n.index("vendor/bin/")
-                      return n[:idx]   # e.g. "" or "system/"
+                      return n[:n.index("vendor/bin/")]
               return ""
 
           with zipfile.ZipFile(ROM) as z:
               prefix = detect_prefix(z)
               print(f"[*] Detected vendor prefix: '{prefix}'")
 
-              # Re-map patterns with detected prefix
               MAPPED = {}
               for folder, pats in TARGETS.items():
-                  MAPPED[folder] = [prefix + p.lstrip("*") if not p.startswith("*"+prefix) else p
-                                    for p in pats]
-                  # Always keep wildcard form too
+                  MAPPED[folder] = [prefix + p.lstrip("*") if not p.startswith("*"+prefix) else p for p in pats]
                   MAPPED[folder] += pats
 
               total = 0
@@ -131,11 +108,9 @@ jobs:
                   if entry.endswith("/"):
                       continue
                   for folder, pats in MAPPED.items():
-                      # Skip lib64 entries in lib folder
                       if folder == "vendor_lib" and "lib64" in entry:
                           continue
                       if matches(entry, pats):
-                          # Strip prefix to get clean relative path
                           rel = entry.replace(prefix, "", 1) if prefix else entry
                           out_path = os.path.join(BASE, folder, rel)
                           os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -148,8 +123,6 @@ jobs:
               print(f"\n[✓] Extracted {total} files total")
           PYEXTRACT
 
-          echo ""
-          echo "=== Extraction summary ==="
           echo "vendor/bin   : $(find extracted/vendor_bin  -type f | wc -l) files"
           echo "vendor/etc   : $(find extracted/vendor_etc  -type f | wc -l) files"
           echo "vendor/lib   : $(find extracted/vendor_lib  -type f | wc -l) files"
@@ -164,8 +137,7 @@ jobs:
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────
-  # JOB 2  —  Wait for user to send the 4 folders,
-  #           then build the module from scratch
+  # JOB 2  —  Build module from scratch
   # ─────────────────────────────────────────────────────────
   build-module:
     name: Build Magisk/KSU Module from scratch
@@ -187,17 +159,15 @@ jobs:
           M="module_build"
           mkdir -p "$M"/{META-INF/com/google/android,common,system/vendor/{bin,etc,lib/{egl,hw},lib64/{egl,hw}}}
 
-          # ── module.prop ─────────────────────────────────
           cat > "$M/module.prop" << PROP
 id=AKRO_GameEquipment_14C
 name=AKRO Complete Game Equipment - Redmi 14C
-version=${{ github.event.inputs.version || 'v1.0' }}
-versionCode=$(echo "${{ github.event.inputs.version || 'v1.0' }}" | tr -d 'v.')
+version=${{ github.event.inputs.version }}
+versionCode=$(echo "${{ github.event.inputs.version }}" | tr -d 'v.')
 author=AKRO
 description=GPU/Thermal/Touch optimization for Redmi 14C 4G - Snapdragon 4 Gen 2 - Adreno 619
 PROP
 
-          # ── META-INF ────────────────────────────────────
           echo "#MAGISK" > "$M/META-INF/com/google/android/updater-script"
 
           cat > "$M/META-INF/com/google/android/update-binary" << 'UB'
@@ -224,7 +194,6 @@ print_modname; on_install
 set_permissions
 UB
 
-          # ── install.sh ──────────────────────────────────
           cat > "$M/install.sh" << 'IS'
 SKIPMOUNT=false
 PROPFILE=true
@@ -282,7 +251,6 @@ set_permissions() {
 }
 IS
 
-          # ── system.prop ─────────────────────────────────
           cat > "$M/system.prop" << 'SP'
 # AKRO GameEquipment - Redmi 14C | SM6225 | Adreno 619
 ro.vendor.dfps.enable=false
@@ -323,37 +291,26 @@ persist.miui.extm.enable=1
 debug.sf.enable_hwc_vds=1
 SP
 
-          # ── service.sh ──────────────────────────────────
           cat > "$M/service.sh" << 'SS'
 #!/system/bin/sh
 MODDIR=${0%/*}
 until [ "$(getprop sys.boot_completed)" = "1" ]; do sleep 2; done
 sleep 5
-
-# CPU governor
 for cpu in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
   echo "performance" > "$cpu" 2>/dev/null || echo "schedutil" > "$cpu" 2>/dev/null
 done
-
-# GPU Adreno 619
 echo "performance" > /sys/class/kgsl/kgsl-3d0/devfreq/governor 2>/dev/null
 echo 0 > /sys/class/kgsl/kgsl-3d0/bus_split 2>/dev/null
 echo 1 > /sys/class/kgsl/kgsl-3d0/force_clk_on 2>/dev/null
 echo 10000 > /sys/class/kgsl/kgsl-3d0/idle_timer 2>/dev/null
-
-# I/O
 for b in /sys/block/*/queue/scheduler; do
   echo "deadline" > "$b" 2>/dev/null || echo "cfq" > "$b" 2>/dev/null
 done
 for b in /sys/block/*/queue/read_ahead_kb; do echo "2048" > "$b" 2>/dev/null; done
-
-# VM
 echo 10 > /proc/sys/vm/swappiness
 echo 0 > /proc/sys/vm/page-cluster
 echo 3000 > /proc/sys/vm/dirty_expire_centisecs
 echo 500 > /proc/sys/vm/dirty_writeback_centisecs
-
-# Network
 echo 3 > /proc/sys/net/ipv4/tcp_fastopen 2>/dev/null
 echo 1 > /proc/sys/net/ipv4/tcp_low_latency 2>/dev/null
 echo 0 > /proc/sys/net/ipv4/tcp_timestamps 2>/dev/null
@@ -364,68 +321,54 @@ SS
         run: |
           M="module_build"
 
-          echo "[*] Injecting vendor/bin..."
           find extracted/vendor_bin -type f 2>/dev/null | while read f; do
             rel=$(echo "$f" | sed 's|extracted/vendor_bin/||;s|.*vendor/bin/||')
             mkdir -p "$M/system/vendor/bin/$(dirname $rel)"
             cp -v "$f" "$M/system/vendor/bin/$rel"
           done
 
-          echo "[*] Injecting vendor/etc..."
           find extracted/vendor_etc -type f 2>/dev/null | while read f; do
             rel=$(echo "$f" | sed 's|extracted/vendor_etc/||;s|.*vendor/etc/||')
             mkdir -p "$M/system/vendor/etc/$(dirname $rel)"
             cp -v "$f" "$M/system/vendor/etc/$rel"
           done
 
-          echo "[*] Injecting vendor/lib..."
           find extracted/vendor_lib -type f 2>/dev/null | while read f; do
             if echo "$f" | grep -q "egl/"; then
-              fname=$(basename "$f")
-              cp -v "$f" "$M/system/vendor/lib/egl/$fname"
+              cp -v "$f" "$M/system/vendor/lib/egl/$(basename $f)"
             elif echo "$f" | grep -q "hw/"; then
-              fname=$(basename "$f")
-              cp -v "$f" "$M/system/vendor/lib/hw/$fname"
+              cp -v "$f" "$M/system/vendor/lib/hw/$(basename $f)"
             else
-              fname=$(basename "$f")
-              cp -v "$f" "$M/system/vendor/lib/$fname"
+              cp -v "$f" "$M/system/vendor/lib/$(basename $f)"
             fi
           done
 
-          echo "[*] Injecting vendor/lib64..."
           find extracted/vendor_lib64 -type f 2>/dev/null | while read f; do
             if echo "$f" | grep -q "egl/"; then
-              fname=$(basename "$f")
-              cp -v "$f" "$M/system/vendor/lib64/egl/$fname"
+              cp -v "$f" "$M/system/vendor/lib64/egl/$(basename $f)"
             elif echo "$f" | grep -q "hw/"; then
-              fname=$(basename "$f")
-              cp -v "$f" "$M/system/vendor/lib64/hw/$fname"
+              cp -v "$f" "$M/system/vendor/lib64/hw/$(basename $f)"
             else
-              fname=$(basename "$f")
-              cp -v "$f" "$M/system/vendor/lib64/$fname"
+              cp -v "$f" "$M/system/vendor/lib64/$(basename $f)"
             fi
           done
 
-          echo ""
-          echo "=== Final module structure ==="
           find "$M" -type f | sort
           echo "Total: $(find $M -type f | wc -l) files"
 
       - name: Package final ZIP
         run: |
-          VERSION="${{ github.event.inputs.version || 'v1.0' }}"
-          ZIP="AKRO_GameEquipment_Redmi14C_${VERSION}.zip"
+          ZIP="AKRO_GameEquipment_Redmi14C_${{ github.event.inputs.version }}.zip"
           cd module_build
           zip -r9 "../$ZIP" . --exclude "*.DS_Store"
           cd ..
-          echo "ZIP=$ZIP" >> $GITHUB_ENV
           ls -lh "$ZIP"
           echo "SHA256: $(sha256sum $ZIP | cut -d' ' -f1)"
 
       - name: Upload module artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version || 'v1.0' }}
+          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version }}
           path: "*.zip"
           retention-days: 30
 
@@ -441,25 +384,19 @@ SS
       - name: Download built ZIP
         uses: actions/download-artifact@v4
         with:
-          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version || 'v1.0' }}
+          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version }}
           path: dist/
 
       - name: Upload to GoFile
         run: |
           ZIP=$(find dist/ -name "*.zip" | head -1)
-          echo "[*] Uploading: $ZIP"
-
           SERVER=$(curl -s "https://api.gofile.io/servers" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
 s=d.get('data',{}).get('servers',[])
 print(s[0]['name'] if s else 'store1')
 ")
-          echo "[*] GoFile server: $SERVER"
-
           RESP=$(curl -s -F "file=@$ZIP" "https://$SERVER.gofile.io/uploadFile")
-          echo "Response: $RESP"
-
           URL=$(echo "$RESP" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -470,13 +407,8 @@ import json,sys
 d=json.load(sys.stdin)
 print(d['data'].get('fileId','N/A') if d.get('status')=='ok' else 'N/A')
 ")
+          [ "$URL" = "FAILED" ] && echo "[!] Upload failed!" && exit 1
 
-          if [ "$URL" = "FAILED" ]; then
-            echo "[!] Upload failed!"
-            exit 1
-          fi
-
-          echo ""
           echo "╔══════════════════════════════════════════╗"
           echo "║  ✅  GOFILE UPLOAD SUCCESSFUL            ║"
           echo "║  Link : $URL"
@@ -485,10 +417,9 @@ print(d['data'].get('fileId','N/A') if d.get('status')=='ok' else 'N/A')
 
           cat >> $GITHUB_STEP_SUMMARY << SUM
 ## ✅ AKRO GameEquipment - Redmi 14C
-
 | | |
 |--|--|
-| Version | ${{ github.event.inputs.version || 'v1.0' }} |
+| Version | ${{ github.event.inputs.version }} |
 | GoFile | $URL |
 | File ID | $ID |
 SUM
