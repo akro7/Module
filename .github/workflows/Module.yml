@@ -9,37 +9,69 @@ jobs:
     steps:
 
       - name: Install tools
-        run: sudo apt-get install -y unzip p7zip-full python3 curl
+        run: sudo apt-get install -y unzip p7zip-full python3 curl aria2 file
 
       - name: Download ROM
         run: |
           aria2c -x16 -s16 \
             --user-agent="Mozilla/5.0 Chrome/120" \
-            --out=rom.zip \
+            --out=rom.bin \
             "https://xm01.space/MyUrLiwlJzsOOD0BMz8GIywRNEEOFTAINBUpIzE/KzUOPDJBGyEELhsQMDUxIS0eGz8dLzE/Hx4OFQRBDjwfDDQ8Kw8bFQQeNBIuAA4KBCYzPC0wMQofHg4KHwwxED0kQh4nLycSIh4nFjkvJxIXPCswKx8QMjUfDhEANTMRMhwbEQAMOQoEJjwRLSM5FTQtLDA9JEIeJy8nEiIeJxY5LycSFzwrMCsfEDI1HzweB0EnAjlBHx4JHg4CHUEnFh0vJxYaHCcDOS8nBD0gMSE9ATkVABwbISs1OQoEAiceQiIfOBcuGz8IOhwWCT8FAx0RJxYdACcDLBM="
-          ls -lh rom.zip
+          ls -lh rom.bin
+          file rom.bin
+          xxd rom.bin | head -3
 
-      - name: Extract vendor folders
+      - name: Detect format and extract vendor folders
         run: |
           mkdir -p out
+          TYPE=$(file rom.bin)
+          echo "Detected: $TYPE"
+
+          if echo "$TYPE" | grep -qi "zip"; then
+            echo "[*] ZIP format"
+            cp rom.bin rom.zip
+          elif echo "$TYPE" | grep -qi "7-zip\|7z"; then
+            echo "[*] 7z format — converting"
+            7z x rom.bin -orom_extracted/
+            cd rom_extracted && zip -r9 ../rom.zip . && cd ..
+          elif echo "$TYPE" | grep -qi "tar"; then
+            echo "[*] TAR format — converting"
+            mkdir -p rom_extracted && tar -xf rom.bin -C rom_extracted/
+            cd rom_extracted && zip -r9 ../rom.zip . && cd ..
+          elif echo "$TYPE" | grep -qi "lz4\|sparse"; then
+            echo "[*] Sparse/LZ4 — trying simg2img"
+            sudo apt-get install -y android-tools-fsutils 2>/dev/null || true
+            simg2img rom.bin rom_raw.img 2>/dev/null || cp rom.bin rom_raw.img
+            7z x rom_raw.img -orom_extracted/ 2>/dev/null || true
+            cd rom_extracted && zip -r9 ../rom.zip . && cd ..
+          else
+            echo "[*] Unknown — trying 7z direct"
+            7z x rom.bin -orom_extracted/
+            cd rom_extracted && zip -r9 ../rom.zip . && cd ..
+          fi
+
+          echo "Extracting vendor folders..."
           python3 << 'PY'
-          import zipfile, os, shutil, fnmatch
-          pats = ["*vendor/bin/*","*vendor/etc/*","*vendor/lib/*","*vendor/lib64/*"]
-          with zipfile.ZipFile("rom.zip") as z:
-            for e in z.namelist():
-              if e.endswith("/"): continue
-              if any(fnmatch.fnmatch(e,p) for p in pats):
-                out = "out/" + e
-                os.makedirs(os.path.dirname(out), exist_ok=True)
-                with z.open(e) as s, open(out,"wb") as d: shutil.copyfileobj(s,d)
-          print("done:", sum(1 for _ in open("out") if True))
-          PY
+import zipfile, os, shutil, fnmatch
+pats = ["*vendor/bin/*","*vendor/etc/*","*vendor/lib/*","*vendor/lib64/*"]
+with zipfile.ZipFile("rom.zip") as z:
+  total = 0
+  for e in z.namelist():
+    if e.endswith("/"): continue
+    if any(fnmatch.fnmatch(e,p) for p in pats):
+      out = "out/" + e
+      os.makedirs(os.path.dirname(out), exist_ok=True)
+      with z.open(e) as s, open(out,"wb") as d: shutil.copyfileobj(s,d)
+      total += 1
+  print(f"[✓] {total} files extracted")
+PY
           find out -type f | wc -l
 
       - name: Zip and upload to GoFile
         run: |
           zip -r9 vendor_folders.zip out/
+          ls -lh vendor_folders.zip
           SERVER=$(curl -s "https://api.gofile.io/servers" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['servers'][0]['name'])")
           URL=$(curl -s -F "file=@vendor_folders.zip" "https://$SERVER.gofile.io/uploadFile" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['downloadPage'])")
           echo "✅ $URL"
-          echo "## GoFile: $URL" >> $GITHUB_STEP_SUMMARY
+          echo "## ✅ GoFile: $URL" >> $GITHUB_STEP_SUMMARY
