@@ -1,0 +1,45 @@
+name: ROM Extract
+
+on:
+  workflow_dispatch:
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Install tools
+        run: sudo apt-get install -y unzip p7zip-full python3 curl
+
+      - name: Download ROM
+        run: |
+          aria2c -x16 -s16 \
+            --user-agent="Mozilla/5.0 Chrome/120" \
+            --out=rom.zip \
+            "https://xm01.space/MyUrLiwlJzsOOD0BMz8GIywRNEEOFTAINBUpIzE/KzUOPDJBGyEELhsQMDUxIS0eGz8dLzE/Hx4OFQRBDjwfDDQ8Kw8bFQQeNBIuAA4KBCYzPC0wMQofHg4KHwwxED0kQh4nLycSIh4nFjkvJxIXPCswKx8QMjUfDhEANTMRMhwbEQAMOQoEJjwRLSM5FTQtLDA9JEIeJy8nEiIeJxY5LycSFzwrMCsfEDI1HzweB0EnAjlBHx4JHg4CHUEnFh0vJxYaHCcDOS8nBD0gMSE9ATkVABwbISs1OQoEAiceQiIfOBcuGz8IOhwWCT8FAx0RJxYdACcDLBM="
+          ls -lh rom.zip
+
+      - name: Extract vendor folders
+        run: |
+          mkdir -p out
+          python3 << 'PY'
+          import zipfile, os, shutil, fnmatch
+          pats = ["*vendor/bin/*","*vendor/etc/*","*vendor/lib/*","*vendor/lib64/*"]
+          with zipfile.ZipFile("rom.zip") as z:
+            for e in z.namelist():
+              if e.endswith("/"): continue
+              if any(fnmatch.fnmatch(e,p) for p in pats):
+                out = "out/" + e
+                os.makedirs(os.path.dirname(out), exist_ok=True)
+                with z.open(e) as s, open(out,"wb") as d: shutil.copyfileobj(s,d)
+          print("done:", sum(1 for _ in open("out") if True))
+          PY
+          find out -type f | wc -l
+
+      - name: Zip and upload to GoFile
+        run: |
+          zip -r9 vendor_folders.zip out/
+          SERVER=$(curl -s "https://api.gofile.io/servers" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['servers'][0]['name'])")
+          URL=$(curl -s -F "file=@vendor_folders.zip" "https://$SERVER.gofile.io/uploadFile" | python3 -c "import json,sys; print(json.load(sys.stdin)['data']['downloadPage'])")
+          echo "✅ $URL"
+          echo "## GoFile: $URL" >> $GITHUB_STEP_SUMMARY
