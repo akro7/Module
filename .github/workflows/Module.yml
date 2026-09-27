@@ -4,6 +4,10 @@
 name: Build AKRO GameEquipment - Redmi 14C
 
 on:
+  push:
+    branches:
+      - main
+      - master
   workflow_dispatch:
     inputs:
       version:
@@ -187,8 +191,8 @@ jobs:
           cat > "$M/module.prop" << PROP
 id=AKRO_GameEquipment_14C
 name=AKRO Complete Game Equipment - Redmi 14C
-version=${{ github.event.inputs.version }}
-versionCode=$(echo "${{ github.event.inputs.version }}" | tr -d 'v.')
+version=${{ github.event.inputs.version || 'v1.0' }}
+versionCode=$(echo "${{ github.event.inputs.version || 'v1.0' }}" | tr -d 'v.')
 author=AKRO
 description=GPU/Thermal/Touch optimization for Redmi 14C 4G - Snapdragon 4 Gen 2 - Adreno 619
 PROP
@@ -409,7 +413,8 @@ SS
 
       - name: Package final ZIP
         run: |
-          ZIP="AKRO_GameEquipment_Redmi14C_${{ github.event.inputs.version }}.zip"
+          VERSION="${{ github.event.inputs.version || 'v1.0' }}"
+          ZIP="AKRO_GameEquipment_Redmi14C_${VERSION}.zip"
           cd module_build
           zip -r9 "../$ZIP" . --exclude "*.DS_Store"
           cd ..
@@ -420,7 +425,7 @@ SS
       - name: Upload module artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version }}
+          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version || 'v1.0' }}
           path: "*.zip"
           retention-days: 30
 
@@ -436,7 +441,7 @@ SS
       - name: Download built ZIP
         uses: actions/download-artifact@v4
         with:
-          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version }}
+          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version || 'v1.0' }}
           path: dist/
 
       - name: Upload to GoFile
@@ -483,7 +488,7 @@ print(d['data'].get('fileId','N/A') if d.get('status')=='ok' else 'N/A')
 
 | | |
 |--|--|
-| Version | ${{ github.event.inputs.version }} |
+| Version | ${{ github.event.inputs.version || 'v1.0' }} |
 | GoFile | $URL |
 | File ID | $ID |
 SUM
