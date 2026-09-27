@@ -1,23 +1,16 @@
-# ============================================================
-# Module.yml  —  AKRO GameEquipment Redmi 14C
-# ============================================================
 name: Build AKRO GameEquipment - Redmi 14C
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Module version (e.g. v1.0)'
+        description: 'version'
         required: true
         default: 'v1.0'
-        type: string
 
 jobs:
-  # ─────────────────────────────────────────────────────────
-  # JOB 1  —  Download ROM + extract the 4 vendor folders
-  # ─────────────────────────────────────────────────────────
-  extract-rom-folders:
-    name: Extract vendor/{bin,etc,lib,lib64} from ROM
+  build:
+    name: Download ROM - Extract - Build Module - Upload GoFile
     runs-on: ubuntu-latest
 
     steps:
@@ -29,152 +22,90 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq unzip zip curl wget aria2 p7zip-full python3
 
-      - name: Download full ROM zip
+      - name: Download ROM
         run: |
           mkdir -p rom_work
           ROM_URL="https://xm01.space/MyUrLiwlJzsOOD0BMz8GIywRNEEOFTAINBUpIzE/KzUOPDJBGyEELhsQMDUxIS0eGz8dLzE/Hx4OFQRBDjwfDDQ8Kw8bFQQeNBIuAA4KBCYzPC0wMQofHg4KHwwxED0kQh4nLycSIh4nFjkvJxIXPCswKx8QMjUfDhEANTMRMhwbEQAMOQoEJjwRLSM5FTQtLDA9JEIeJy8nEiIeJxY5LycSFzwrMCsfEDI1HzweB0EnAjlBHx4JHg4CHUEnFh0vJxYaHCcDOS8nBD0gMSE9ATkVABwbISs1OQoEAiceQiIfOBcuGz8IOhwWCT8FAx0RJxYdACcDLBM="
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"
 
-          echo "[*] Trying aria2c..."
-          aria2c -x 16 -s 16 -k 1M \
-            --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0" \
-            --dir=rom_work --out=rom_full.zip "$ROM_URL" \
-          || {
-            echo "[*] aria2c failed, trying wget..."
-            wget -q \
-              --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0" \
-              -O rom_work/rom_full.zip "$ROM_URL"
-          } || {
-            echo "[*] wget failed, trying curl..."
-            curl -L \
-              -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0" \
-              -o rom_work/rom_full.zip "$ROM_URL"
-          }
+          aria2c -x16 -s16 -k1M --user-agent="$UA" --dir=rom_work --out=rom_full.zip "$ROM_URL" \
+          || wget -q --user-agent="$UA" -O rom_work/rom_full.zip "$ROM_URL" \
+          || curl -L -A "$UA" -o rom_work/rom_full.zip "$ROM_URL"
 
           ls -lh rom_work/rom_full.zip
           file rom_work/rom_full.zip
 
-      - name: Scan ROM manifest + find target paths
-        run: |
-          echo "[*] Listing ROM contents..."
-          unzip -l rom_work/rom_full.zip > rom_work/manifest.txt 2>&1 \
-          || 7z l rom_work/rom_full.zip > rom_work/manifest.txt 2>&1
-
-          echo "--- vendor/bin ---"
-          grep -i "vendor/bin/" rom_work/manifest.txt | head -30 || true
-          echo "--- vendor/etc ---"
-          grep -i "vendor/etc/" rom_work/manifest.txt | head -30 || true
-          echo "--- vendor/lib ---"
-          grep -iE "vendor/lib[^6]" rom_work/manifest.txt | head -30 || true
-          echo "--- vendor/lib64 ---"
-          grep -i "vendor/lib64" rom_work/manifest.txt | head -30 || true
-
-      - name: Extract all 4 folders (bin / etc / lib / lib64)
+      - name: Extract vendor/{bin,etc,lib,lib64} FULL
         run: |
           mkdir -p extracted/{vendor_bin,vendor_etc,vendor_lib,vendor_lib64}
 
-          python3 << 'PYEXTRACT'
+          python3 << 'PYEXT'
           import zipfile, os, fnmatch, shutil
 
-          ROM   = "rom_work/rom_full.zip"
-          BASE  = "extracted"
+          ROM  = "rom_work/rom_full.zip"
+          BASE = "extracted"
 
           TARGETS = {
-              "vendor_bin":   ["*vendor/bin/*"],
-              "vendor_etc":   ["*vendor/etc/*"],
-              "vendor_lib":   ["*vendor/lib/egl/*","*vendor/lib/hw/*","*vendor/lib/*.so"],
-              "vendor_lib64": ["*vendor/lib64/egl/*","*vendor/lib64/hw/*","*vendor/lib64/*.so"],
+            "vendor_bin":   ["*vendor/bin/*"],
+            "vendor_etc":   ["*vendor/etc/*"],
+            "vendor_lib":   ["*vendor/lib/egl/*","*vendor/lib/hw/*","*vendor/lib/*.so"],
+            "vendor_lib64": ["*vendor/lib64/egl/*","*vendor/lib64/hw/*","*vendor/lib64/*.so"],
           }
 
-          def matches(name, patterns):
-              return any(fnmatch.fnmatch(name, p) for p in patterns)
-
           def detect_prefix(z):
-              for n in z.namelist():
-                  if "vendor/bin/" in n:
-                      return n[:n.index("vendor/bin/")]
-              return ""
+            for n in z.namelist():
+              if "vendor/bin/" in n:
+                return n[:n.index("vendor/bin/")]
+            return ""
 
           with zipfile.ZipFile(ROM) as z:
-              prefix = detect_prefix(z)
-              print(f"[*] Detected vendor prefix: '{prefix}'")
-
-              MAPPED = {}
+            prefix = detect_prefix(z)
+            print(f"[*] prefix: '{prefix}'")
+            total = 0
+            for entry in z.namelist():
+              if entry.endswith("/"): continue
               for folder, pats in TARGETS.items():
-                  MAPPED[folder] = [prefix + p.lstrip("*") if not p.startswith("*"+prefix) else p for p in pats]
-                  MAPPED[folder] += pats
+                if folder == "vendor_lib" and "lib64" in entry: continue
+                full_pats = pats + [prefix + p.lstrip("*") for p in pats]
+                if any(fnmatch.fnmatch(entry, p) for p in full_pats):
+                  rel = entry.replace(prefix,"",1) if prefix else entry
+                  out = os.path.join(BASE, folder, rel)
+                  os.makedirs(os.path.dirname(out), exist_ok=True)
+                  with z.open(entry) as src, open(out,"wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                  print(f"  [{folder}] {rel}")
+                  total += 1
+                  break
+            print(f"\n[✓] {total} files extracted")
+          PYEXT
 
-              total = 0
-              for entry in z.namelist():
-                  if entry.endswith("/"):
-                      continue
-                  for folder, pats in MAPPED.items():
-                      if folder == "vendor_lib" and "lib64" in entry:
-                          continue
-                      if matches(entry, pats):
-                          rel = entry.replace(prefix, "", 1) if prefix else entry
-                          out_path = os.path.join(BASE, folder, rel)
-                          os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                          with z.open(entry) as src, open(out_path, "wb") as dst:
-                              shutil.copyfileobj(src, dst)
-                          print(f"  [{folder}] {rel}")
-                          total += 1
-                          break
+          echo "bin   : $(find extracted/vendor_bin  -type f | wc -l)"
+          echo "etc   : $(find extracted/vendor_etc  -type f | wc -l)"
+          echo "lib   : $(find extracted/vendor_lib  -type f | wc -l)"
+          echo "lib64 : $(find extracted/vendor_lib64 -type f | wc -l)"
+          echo "total : $(find extracted -type f | wc -l)"
 
-              print(f"\n[✓] Extracted {total} files total")
-          PYEXTRACT
-
-          echo "vendor/bin   : $(find extracted/vendor_bin  -type f | wc -l) files"
-          echo "vendor/etc   : $(find extracted/vendor_etc  -type f | wc -l) files"
-          echo "vendor/lib   : $(find extracted/vendor_lib  -type f | wc -l) files"
-          echo "vendor/lib64 : $(find extracted/vendor_lib64 -type f | wc -l) files"
-          echo "Total        : $(find extracted -type f | wc -l) files"
-
-      - name: Upload extracted folders
-        uses: actions/upload-artifact@v4
-        with:
-          name: vendor-folders-extracted
-          path: extracted/
-          retention-days: 7
-
-  # ─────────────────────────────────────────────────────────
-  # JOB 2  —  Build module from scratch
-  # ─────────────────────────────────────────────────────────
-  build-module:
-    name: Build Magisk/KSU Module from scratch
-    runs-on: ubuntu-latest
-    needs: extract-rom-folders
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download extracted vendor folders
-        uses: actions/download-artifact@v4
-        with:
-          name: vendor-folders-extracted
-          path: extracted/
-
-      - name: Build module directory from scratch
+      - name: Build Magisk Module from scratch
         run: |
           M="module_build"
-          mkdir -p "$M"/{META-INF/com/google/android,common,system/vendor/{bin,etc,lib/{egl,hw},lib64/{egl,hw}}}
+          mkdir -p "$M"/{META-INF/com/google/android,system/vendor/{bin,etc,lib/{egl,hw},lib64/{egl,hw}}}
 
+          # module.prop
           cat > "$M/module.prop" << PROP
 id=AKRO_GameEquipment_14C
 name=AKRO Complete Game Equipment - Redmi 14C
 version=${{ github.event.inputs.version }}
 versionCode=$(echo "${{ github.event.inputs.version }}" | tr -d 'v.')
 author=AKRO
-description=GPU/Thermal/Touch optimization for Redmi 14C 4G - Snapdragon 4 Gen 2 - Adreno 619
+description=GPU/Thermal/Touch optimization Redmi 14C 4G Snapdragon 4 Gen 2 Adreno 619
 PROP
 
+          # META-INF
           echo "#MAGISK" > "$M/META-INF/com/google/android/updater-script"
-
           cat > "$M/META-INF/com/google/android/update-binary" << 'UB'
 #!/sbin/sh
 OUTFD=$2; ZIPFILE=$3
 umask 022
-mkdir -p /dev/tmp
 ui_print() { echo "$1"; }
 mount /data 2>/dev/null
 if [ -f /data/adb/magisk/util_functions.sh ]; then
@@ -182,7 +113,7 @@ if [ -f /data/adb/magisk/util_functions.sh ]; then
 elif [ -f /data/adb/ksu/util_functions.sh ]; then
   . /data/adb/ksu/util_functions.sh; NVBASE=/data/adb
 else
-  ui_print "Install Magisk or KernelSU first!"; exit 1
+  ui_print "Install Magisk or KernelSU!"; exit 1
 fi
 setup_flashable; mount_partitions; api_level_arch_detect
 $BOOTMODE && boot_actions
@@ -194,13 +125,13 @@ print_modname; on_install
 set_permissions
 UB
 
+          # install.sh
           cat > "$M/install.sh" << 'IS'
 SKIPMOUNT=false
 PROPFILE=true
 POSTFSDATA=false
 LATESTARTSERVICE=true
 REPLACE=""
-
 print_modname() {
   ui_print " "
   ui_print "╔══════════════════════════════════════╗"
@@ -211,48 +142,27 @@ print_modname() {
   sleep 1
   ui_print "• Device  : $(getprop ro.build.product)"
   ui_print "• Model   : $(getprop ro.product.model)"
-  ui_print "• Board   : $(getprop ro.product.board)"
   ui_print "• Android : $(getprop ro.build.version.release)"
-  ui_print "• RAM     : $(free 2>/dev/null | grep Mem | awk '{print $2}') kB"
-  ui_print " "
-  DEVICE=$(getprop ro.product.device)
-  case "$DEVICE" in
-    earth|earthin|earthg|Redmi14C*)
-      ui_print "[✓] Device verified: Redmi 14C" ;;
-    *)
-      ui_print "[!] WARNING: Device not verified ($DEVICE)"
-      sleep 2 ;;
-  esac
 }
-
 on_install() {
-  ui_print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-  ui_print "  Flashing GPU / Thermal / Touch       "
-  ui_print "  vendor/{bin,etc,lib,lib64}...        "
-  ui_print "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+  ui_print "[*] Installing vendor files..."
   unzip -o "$ZIPFILE" 'system/*' -d "$MODPATH" >&2
   ui_print "[*] Clearing shader cache..."
-  for i in $(find /data/user_de -name "*shaders_cache*" 2>/dev/null | grep code_cache); do
-    rm -rf "$i" 2>/dev/null
-  done
-  for i in $(find /data -type f -name "*shader*" 2>/dev/null); do
-    rm -f "$i" 2>/dev/null
-  done
+  for i in $(find /data/user_de -name "*shaders_cache*" 2>/dev/null | grep code_cache); do rm -rf "$i" 2>/dev/null; done
+  for i in $(find /data -type f -name "*shader*" 2>/dev/null); do rm -f "$i" 2>/dev/null; done
   ui_print "[✓] Done"
 }
-
 set_permissions() {
   set_perm_recursive "$MODPATH" 0 0 0755 0644
   set_perm_recursive "$MODPATH/system/vendor/bin" 0 2000 0755 0755
-  ui_print " "
   ui_print "╔══════════════════════════════════════╗"
-  ui_print "║   Complete! — Reboot to apply       ║"
+  ui_print "║   Complete! Reboot to apply         ║"
   ui_print "╚══════════════════════════════════════╝"
 }
 IS
 
+          # system.prop
           cat > "$M/system.prop" << 'SP'
-# AKRO GameEquipment - Redmi 14C | SM6225 | Adreno 619
 ro.vendor.dfps.enable=false
 ro.vendor.smart_dfps.enable=false
 debug.gr.swapinterval=0
@@ -265,10 +175,8 @@ persist.vendor.thermal.config=thermal-normal
 sys.thermal.data.source=0
 touch.size.scale=1
 touch.size.bias=0
-touch.size.isSummed=0
 touch.pressure.scale=0.001
 touch.distance.calibration=none
-touch.distance.scale=0
 touch.coverage.calibration=box
 touch.gestureMode=spots
 MultitouchSettleInterval=1ms
@@ -277,7 +185,6 @@ TapInterval=1ms
 TapSlop=1px
 net.ipv4.tcp_fastopen=3
 wifi.supplicant_scan_interval=180
-net.tcp.buffersize.wifi=524288,1048576,2097152,524288,1048576,2097152
 ro.config.low_ram=false
 ro.lmk.critical_upgrade=true
 ro.lmk.upgrade_pressure=40
@@ -291,6 +198,7 @@ persist.miui.extm.enable=1
 debug.sf.enable_hwc_vds=1
 SP
 
+          # service.sh
           cat > "$M/service.sh" << 'SS'
 #!/system/bin/sh
 MODDIR=${0%/*}
@@ -303,93 +211,48 @@ echo "performance" > /sys/class/kgsl/kgsl-3d0/devfreq/governor 2>/dev/null
 echo 0 > /sys/class/kgsl/kgsl-3d0/bus_split 2>/dev/null
 echo 1 > /sys/class/kgsl/kgsl-3d0/force_clk_on 2>/dev/null
 echo 10000 > /sys/class/kgsl/kgsl-3d0/idle_timer 2>/dev/null
-for b in /sys/block/*/queue/scheduler; do
-  echo "deadline" > "$b" 2>/dev/null || echo "cfq" > "$b" 2>/dev/null
-done
+for b in /sys/block/*/queue/scheduler; do echo "deadline" > "$b" 2>/dev/null; done
 for b in /sys/block/*/queue/read_ahead_kb; do echo "2048" > "$b" 2>/dev/null; done
 echo 10 > /proc/sys/vm/swappiness
 echo 0 > /proc/sys/vm/page-cluster
-echo 3000 > /proc/sys/vm/dirty_expire_centisecs
-echo 500 > /proc/sys/vm/dirty_writeback_centisecs
 echo 3 > /proc/sys/net/ipv4/tcp_fastopen 2>/dev/null
 echo 1 > /proc/sys/net/ipv4/tcp_low_latency 2>/dev/null
-echo 0 > /proc/sys/net/ipv4/tcp_timestamps 2>/dev/null
 SS
           chmod +x "$M/service.sh"
 
-      - name: Inject extracted vendor files into module
-        run: |
-          M="module_build"
-
+          # Inject the 4 folders
           find extracted/vendor_bin -type f 2>/dev/null | while read f; do
-            rel=$(echo "$f" | sed 's|extracted/vendor_bin/||;s|.*vendor/bin/||')
-            mkdir -p "$M/system/vendor/bin/$(dirname $rel)"
-            cp -v "$f" "$M/system/vendor/bin/$rel"
+            cp -v "$f" "$M/system/vendor/bin/$(basename $f)"
           done
-
           find extracted/vendor_etc -type f 2>/dev/null | while read f; do
-            rel=$(echo "$f" | sed 's|extracted/vendor_etc/||;s|.*vendor/etc/||')
+            rel=$(echo "$f" | sed 's|.*vendor/etc/||')
             mkdir -p "$M/system/vendor/etc/$(dirname $rel)"
             cp -v "$f" "$M/system/vendor/etc/$rel"
           done
-
           find extracted/vendor_lib -type f 2>/dev/null | while read f; do
-            if echo "$f" | grep -q "egl/"; then
-              cp -v "$f" "$M/system/vendor/lib/egl/$(basename $f)"
-            elif echo "$f" | grep -q "hw/"; then
-              cp -v "$f" "$M/system/vendor/lib/hw/$(basename $f)"
-            else
-              cp -v "$f" "$M/system/vendor/lib/$(basename $f)"
-            fi
+            if echo "$f"|grep -q "egl/"; then cp -v "$f" "$M/system/vendor/lib/egl/$(basename $f)"
+            elif echo "$f"|grep -q "hw/"; then cp -v "$f" "$M/system/vendor/lib/hw/$(basename $f)"
+            else cp -v "$f" "$M/system/vendor/lib/$(basename $f)"; fi
           done
-
           find extracted/vendor_lib64 -type f 2>/dev/null | while read f; do
-            if echo "$f" | grep -q "egl/"; then
-              cp -v "$f" "$M/system/vendor/lib64/egl/$(basename $f)"
-            elif echo "$f" | grep -q "hw/"; then
-              cp -v "$f" "$M/system/vendor/lib64/hw/$(basename $f)"
-            else
-              cp -v "$f" "$M/system/vendor/lib64/$(basename $f)"
-            fi
+            if echo "$f"|grep -q "egl/"; then cp -v "$f" "$M/system/vendor/lib64/egl/$(basename $f)"
+            elif echo "$f"|grep -q "hw/"; then cp -v "$f" "$M/system/vendor/lib64/hw/$(basename $f)"
+            else cp -v "$f" "$M/system/vendor/lib64/$(basename $f)"; fi
           done
 
-          find "$M" -type f | sort
-          echo "Total: $(find $M -type f | wc -l) files"
+          echo "Total module files: $(find $M -type f | wc -l)"
 
-      - name: Package final ZIP
+      - name: Package ZIP
         run: |
           ZIP="AKRO_GameEquipment_Redmi14C_${{ github.event.inputs.version }}.zip"
-          cd module_build
-          zip -r9 "../$ZIP" . --exclude "*.DS_Store"
-          cd ..
+          cd module_build && zip -r9 "../$ZIP" . --exclude "*.DS_Store" && cd ..
           ls -lh "$ZIP"
           echo "SHA256: $(sha256sum $ZIP | cut -d' ' -f1)"
-
-      - name: Upload module artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version }}
-          path: "*.zip"
-          retention-days: 30
-
-  # ─────────────────────────────────────────────────────────
-  # JOB 3  —  Upload to GoFile
-  # ─────────────────────────────────────────────────────────
-  upload-gofile:
-    name: Upload to GoFile
-    runs-on: ubuntu-latest
-    needs: build-module
-
-    steps:
-      - name: Download built ZIP
-        uses: actions/download-artifact@v4
-        with:
-          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version }}
-          path: dist/
+          echo "ZIP=$ZIP" >> $GITHUB_ENV
 
       - name: Upload to GoFile
         run: |
-          ZIP=$(find dist/ -name "*.zip" | head -1)
+          ZIP=$(ls AKRO_GameEquipment_Redmi14C_*.zip | head -1)
           SERVER=$(curl -s "https://api.gofile.io/servers" | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -402,24 +265,23 @@ import json,sys
 d=json.load(sys.stdin)
 print(d['data']['downloadPage'] if d.get('status')=='ok' else 'FAILED')
 ")
-          ID=$(echo "$RESP" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-print(d['data'].get('fileId','N/A') if d.get('status')=='ok' else 'N/A')
-")
-          [ "$URL" = "FAILED" ] && echo "[!] Upload failed!" && exit 1
-
+          [ "$URL" = "FAILED" ] && echo "Upload failed!" && exit 1
+          echo ""
           echo "╔══════════════════════════════════════════╗"
-          echo "║  ✅  GOFILE UPLOAD SUCCESSFUL            ║"
-          echo "║  Link : $URL"
-          echo "║  ID   : $ID"
+          echo "║  ✅  UPLOAD DONE                         ║"
+          echo "║  $URL"
           echo "╚══════════════════════════════════════════╝"
-
           cat >> $GITHUB_STEP_SUMMARY << SUM
 ## ✅ AKRO GameEquipment - Redmi 14C
 | | |
 |--|--|
 | Version | ${{ github.event.inputs.version }} |
 | GoFile | $URL |
-| File ID | $ID |
 SUM
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AKRO-Redmi14C-${{ github.event.inputs.version }}
+          path: "*.zip"
+          retention-days: 30
