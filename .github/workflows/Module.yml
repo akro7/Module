@@ -8,8 +8,9 @@ on:
     inputs:
       version:
         description: 'Module version (e.g. v1.0)'
-        required: false
+        required: true
         default: 'v1.0'
+        type: string
 
 jobs:
   # ─────────────────────────────────────────────────────────
@@ -155,16 +156,14 @@ jobs:
 
       - name: Build module directory from scratch
         run: |
-          MOD_VER="${{ github.event.inputs.version }}"
-          [ -z "$MOD_VER" ] && MOD_VER="v1.0"
           M="module_build"
           mkdir -p "$M"/{META-INF/com/google/android,common,system/vendor/{bin,etc,lib/{egl,hw},lib64/{egl,hw}}}
 
           cat > "$M/module.prop" << PROP
 id=AKRO_GameEquipment_14C
 name=AKRO Complete Game Equipment - Redmi 14C
-version=$MOD_VER
-versionCode=$(echo "$MOD_VER" | tr -d 'v.')
+version=${{ github.event.inputs.version }}
+versionCode=$(echo "${{ github.event.inputs.version }}" | tr -d 'v.')
 author=AKRO
 description=GPU/Thermal/Touch optimization for Redmi 14C 4G - Snapdragon 4 Gen 2 - Adreno 619
 PROP
@@ -359,9 +358,7 @@ SS
 
       - name: Package final ZIP
         run: |
-          MOD_VER="${{ github.event.inputs.version }}"
-          [ -z "$MOD_VER" ] && MOD_VER="v1.0"
-          ZIP="AKRO_GameEquipment_Redmi14C_${MOD_VER}.zip"
+          ZIP="AKRO_GameEquipment_Redmi14C_${{ github.event.inputs.version }}.zip"
           cd module_build
           zip -r9 "../$ZIP" . --exclude "*.DS_Store"
           cd ..
@@ -371,7 +368,7 @@ SS
       - name: Upload module artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version || 'v1.0' }}
+          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version }}
           path: "*.zip"
           retention-days: 30
 
@@ -387,7 +384,7 @@ SS
       - name: Download built ZIP
         uses: actions/download-artifact@v4
         with:
-          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version || 'v1.0' }}
+          name: AKRO-GameEquipment-Redmi14C-${{ github.event.inputs.version }}
           path: dist/
 
       - name: Upload to GoFile
@@ -422,7 +419,7 @@ print(d['data'].get('fileId','N/A') if d.get('status')=='ok' else 'N/A')
 ## ✅ AKRO GameEquipment - Redmi 14C
 | | |
 |--|--|
-| Version | ${{ github.event.inputs.version || 'v1.0' }} |
+| Version | ${{ github.event.inputs.version }} |
 | GoFile | $URL |
 | File ID | $ID |
 SUM
