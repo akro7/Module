@@ -10,6 +10,7 @@ on:
         description: 'Module version (e.g. v1.0)'
         required: true
         default: 'v1.0'
+        type: string
 
 jobs:
   # ─────────────────────────────────────────────────────────
