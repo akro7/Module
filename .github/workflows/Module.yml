@@ -51,20 +51,22 @@ jobs:
           fi
 
           echo "Extracting vendor folders..."
-          python3 << 'PY'
-import zipfile, os, shutil, fnmatch
-pats = ["*vendor/bin/*","*vendor/etc/*","*vendor/lib/*","*vendor/lib64/*"]
-with zipfile.ZipFile("rom.zip") as z:
-  total = 0
-  for e in z.namelist():
-    if e.endswith("/"): continue
-    if any(fnmatch.fnmatch(e,p) for p in pats):
-      out = "out/" + e
-      os.makedirs(os.path.dirname(out), exist_ok=True)
-      with z.open(e) as s, open(out,"wb") as d: shutil.copyfileobj(s,d)
-      total += 1
-  print(f"[✓] {total} files extracted")
-PY
+          python3 -c '
+          import zipfile, os, shutil, fnmatch
+          pats = ["*vendor/bin/*", "*vendor/etc/*", "*vendor/lib/*", "*vendor/lib64/*"]
+          with zipfile.ZipFile("rom.zip") as z:
+              total = 0
+              for e in z.namelist():
+                  if e.endswith("/"):
+                      continue
+                  if any(fnmatch.fnmatch(e, p) for p in pats):
+                      out = os.path.join("out", e)
+                      os.makedirs(os.path.dirname(out), exist_ok=True)
+                      with z.open(e) as s, open(out, "wb") as d:
+                          shutil.copyfileobj(s, d)
+                      total += 1
+              print(f"[✓] {total} files extracted")
+          '
           find out -type f | wc -l
 
       - name: Zip and upload to GoFile
